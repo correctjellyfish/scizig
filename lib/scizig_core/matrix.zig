@@ -82,6 +82,38 @@ pub fn Matrix(Element: type) type {
             };
         }
 
+        /// Initialize a Matrix with 0s
+        pub fn init_zeros(allocator: std.mem.Allocator, shape: MatrixShape) !Self {
+            return init_with_value(allocator, shape, 0);
+        }
+
+        /// Initialize a Matrix with increasing sequence
+        pub fn init_arange(allocator: std.mem.Allocator, shape: MatrixShape, start: Element) !Self {
+            const matrix_size = shape.rows * shape.cols;
+            var data = try allocator.alloc(Element, matrix_size);
+            var value = start;
+            for (0..matrix_size) |idx| {
+                data[idx] = value;
+                value += 1;
+            }
+            return Self{
+                .data = data,
+                .start = 0,
+                .shape = shape,
+                .stride = .{ .row = shape.cols, .col = 1 },
+                .is_view = false,
+            };
+        }
+
+        /// Initialize a Matrix with 1s on the diagonal, and 0s everywhere else
+        pub fn init_ident(allocator: std.mem.Allocator, shape: MatrixShape) !Self {
+            var mat = try Self.init_zeros(allocator, shape);
+            for (0..(@min(mat.shape.rows, mat.shape.cols))) |idx| {
+                (try mat.at(idx, idx)).* = 1;
+            }
+            return mat;
+        }
+
         /// Create a matrix from a slice, with the specified `start` (from start of data), and `shape`
         ///
         /// Uses row-major ordering of the data
@@ -142,7 +174,7 @@ pub fn Matrix(Element: type) type {
             return &(matrix.data[matrix.start + row * matrix.stride.row + col * matrix.stride.col]);
         }
 
-        /// Return a view into `matrix`, with potentially changed
+        /// Return a view into `matrix`
         pub fn slice(matrix: *Self, row_slice: MatrixSlice, col_slice: MatrixSlice) Self {
             // Extract data from slices, handling the nulls
             const row_start = row_slice.start orelse 0;
@@ -277,7 +309,7 @@ test "Create Matrix Alloc" {
     try std.testing.expectEqual(matrix.size(), 12);
 }
 
-test "Create Matrix of 0s" {
+test "Create Filled Matrix" {
     var gpa: std.heap.DebugAllocator(.{}) = .init;
     const test_allocator = gpa.allocator();
     defer {
@@ -297,6 +329,81 @@ test "Create Matrix of 0s" {
     for (0..3) |row| {
         for (0..4) |col| {
             try std.testing.expectEqual(try matrix.get(row, col), 0);
+        }
+    }
+}
+
+test "Create Zeroed Matrix" {
+    var gpa: std.heap.DebugAllocator(.{}) = .init;
+    const test_allocator = gpa.allocator();
+    defer {
+        const deinit_status = gpa.deinit();
+        //fail test; can't try in defer as defer is executed after we return
+        if (deinit_status == .leak) std.testing.expect(false) catch @panic("TEST FAIL");
+    }
+
+    var matrix: Matrix(u16) = try Matrix(u16).init_zeros(test_allocator, .{
+        .rows = 3,
+        .cols = 4,
+    });
+    defer matrix.deinit(test_allocator);
+
+    try std.testing.expectEqual(matrix.size(), 12);
+
+    for (0..3) |row| {
+        for (0..4) |col| {
+            try std.testing.expectEqual(try matrix.get(row, col), 0);
+        }
+    }
+}
+test "Create Identity Matrix" {
+    var gpa: std.heap.DebugAllocator(.{}) = .init;
+    const test_allocator = gpa.allocator();
+    defer {
+        const deinit_status = gpa.deinit();
+        //fail test; can't try in defer as defer is executed after we return
+        if (deinit_status == .leak) std.testing.expect(false) catch @panic("TEST FAIL");
+    }
+
+    var matrix: Matrix(u16) = try Matrix(u16).init_ident(test_allocator, .{
+        .rows = 3,
+        .cols = 4,
+    });
+    defer matrix.deinit(test_allocator);
+
+    try std.testing.expectEqual(matrix.size(), 12);
+
+    for (0..3) |row| {
+        for (0..4) |col| {
+            if (row != col) {
+                try std.testing.expectEqual(try matrix.get(row, col), 0);
+            } else {
+                try std.testing.expectEqual(try matrix.get(row, col), 1);
+            }
+        }
+    }
+}
+
+test "Create Sequential Matrix" {
+    var gpa: std.heap.DebugAllocator(.{}) = .init;
+    const test_allocator = gpa.allocator();
+    defer {
+        const deinit_status = gpa.deinit();
+        //fail test; can't try in defer as defer is executed after we return
+        if (deinit_status == .leak) std.testing.expect(false) catch @panic("TEST FAIL");
+    }
+
+    var matrix: Matrix(u16) = try Matrix(u16).init_arange(test_allocator, .{
+        .rows = 3,
+        .cols = 4,
+    }, 1);
+    defer matrix.deinit(test_allocator);
+
+    try std.testing.expectEqual(matrix.size(), 12);
+
+    for (0..3) |row| {
+        for (0..4) |col| {
+            try std.testing.expectEqual(try matrix.get(row, col), 4 * row + col + 1);
         }
     }
 }
