@@ -17,8 +17,8 @@ pub fn build(b: *std.Build) void {
     // in this directory.
 
     // Module containing core data structures
-    const core = b.addModule("core", .{
-        .root_source_file = b.path("lib/core/datastructures.zig"),
+    const scizig_core = b.addModule("scizig_core", .{
+        .root_source_file = b.path("lib/scizig_core/root.zig"),
         .target = target,
     });
 
@@ -40,7 +40,7 @@ pub fn build(b: *std.Build) void {
         // Later on we'll use this module as the root module of a test executable
         // which requires us to specify a target.
         .target = target,
-        .imports = &.{.{ .name = "core", .module = core }},
+        .imports = &.{.{ .name = "scizig_core", .module = scizig_core }},
     });
 
     // Here we define an executable. An executable needs to have a root module
@@ -127,8 +127,8 @@ pub fn build(b: *std.Build) void {
     // A run step that will run the test executable.
     const run_mod_tests = b.addRunArtifact(mod_tests);
 
-    const core_tests = b.addTest(.{ .root_module = core });
-    const run_datastructures_tests = b.addRunArtifact(core_tests);
+    const core_tests = b.addTest(.{ .root_module = scizig_core });
+    const run_core_tests = b.addRunArtifact(core_tests);
 
     // Creates an executable that will run `test` blocks from the executable's
     // root module. Note that test executables only test one module at a time,
@@ -146,7 +146,7 @@ pub fn build(b: *std.Build) void {
     const test_step = b.step("test", "Run tests");
     test_step.dependOn(&run_mod_tests.step);
     test_step.dependOn(&run_exe_tests.step);
-    test_step.dependOn(&run_datastructures_tests.step);
+    test_step.dependOn(&run_core_tests.step);
 
     // Just like flags, top level steps are also listed in the `--help` menu.
     //
