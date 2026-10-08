@@ -36,6 +36,7 @@ pub const MatrixSlice = struct { start: ?usize, stop: ?usize, step: ?usize };
 pub const MatrixError = error{
     InvalidCoord,
     Unbroadcastable,
+    InvalidShape,
 };
 
 /// A two dimentional array
@@ -53,6 +54,10 @@ pub fn Matrix(Element: type) type {
         /// Whether the current matrix is a view into another
         is_view: bool,
 
+        // **********************
+        // *** Struct Methods ***
+        // **********************
+
         /// Create a matrix of `shape`, does not initialize the memory, only allocates it
         pub fn init(allocator: std.mem.Allocator, shape: MatrixShape) !Self {
             const data = try allocator.alloc(Element, shape.rows * shape.cols);
@@ -67,7 +72,7 @@ pub fn Matrix(Element: type) type {
         }
 
         /// Create a matrix of `shape` filled with `value`
-        pub fn init_with_value(allocator: std.mem.Allocator, shape: MatrixShape, value: Element) !Self {
+        pub fn initWithValue(allocator: std.mem.Allocator, shape: MatrixShape, value: Element) !Self {
             const matrix_size = shape.rows * shape.cols;
             var data = try allocator.alloc(Element, matrix_size);
             for (0..matrix_size) |idx| {
@@ -83,12 +88,12 @@ pub fn Matrix(Element: type) type {
         }
 
         /// Initialize a Matrix with 0s
-        pub fn init_zeros(allocator: std.mem.Allocator, shape: MatrixShape) !Self {
-            return init_with_value(allocator, shape, 0);
+        pub fn initZeros(allocator: std.mem.Allocator, shape: MatrixShape) !Self {
+            return initWithValue(allocator, shape, 0);
         }
 
         /// Initialize a Matrix with increasing sequence
-        pub fn init_arange(allocator: std.mem.Allocator, shape: MatrixShape, start: Element) !Self {
+        pub fn initArange(allocator: std.mem.Allocator, shape: MatrixShape, start: Element) !Self {
             const matrix_size = shape.rows * shape.cols;
             var data = try allocator.alloc(Element, matrix_size);
             var value = start;
@@ -106,8 +111,8 @@ pub fn Matrix(Element: type) type {
         }
 
         /// Initialize a Matrix with 1s on the diagonal, and 0s everywhere else
-        pub fn init_ident(allocator: std.mem.Allocator, shape: MatrixShape) !Self {
-            var mat = try Self.init_zeros(allocator, shape);
+        pub fn initIdent(allocator: std.mem.Allocator, shape: MatrixShape) !Self {
+            var mat = try Self.initZeros(allocator, shape);
             for (0..(@min(mat.shape.rows, mat.shape.cols))) |idx| {
                 (try mat.at(idx, idx)).* = 1;
             }
@@ -117,7 +122,10 @@ pub fn Matrix(Element: type) type {
         /// Create a matrix from a slice, with the specified `start` (from start of data), and `shape`
         ///
         /// Uses row-major ordering of the data
-        pub fn init_from_slice(data: []Element, start: usize, shape: MatrixShape) Self {
+        pub fn initFromSlice(data: []Element, start: usize, shape: MatrixShape) !Self {
+            if (start + shape.rows * shape.cols > data.len) {
+                return MatrixError.InvalidShape;
+            }
             return Self{
                 .data = data,
                 .start = start,
@@ -126,6 +134,52 @@ pub fn Matrix(Element: type) type {
                 .is_view = true,
             };
         }
+
+        /// Check if two matrices are equal
+        pub fn equal(a: Self, b: Self) bool {
+            if (!MatrixShape.equal(a.shape, b.shape)) {
+                return false;
+            }
+            for (0..a.shape.rows) |row| {
+                for (0..a.shape.cols) |col| {
+                    const a_val = a.get(row, col) catch {
+                        unreachable;
+                    };
+                    const b_val = b.get(row, col) catch {
+                        unreachable;
+                    };
+                    if (a_val != b_val) {
+                        return false;
+                    }
+                }
+            }
+            return true;
+        }
+
+        /// Check if `actual` is approximately equal to `desired`
+        ///
+        /// Tests if `actual` is within `atol + rtol*abs(desired)` of `desired`
+        pub fn approxEqual(actual: *const Self, desired: *const Self, rtol: Element, atol: Element) bool {
+            if (!MatrixShape.equal(actual.shape, desired.shape)) {
+                return false;
+            }
+            for (0..desired.shape.rows) |row| {
+                for (0..desired.shape.cols) |col| {
+                    const act = actual.get(row, col) catch unreachable;
+                    const des = desired.get(row, col) catch unreachable;
+                    // Not using abs for the subtraction to stop overflow issues with unsigned ints,
+                    // though really this function shouldn't be used much for things that aren't floats
+                    if ((if (act > des) act - des else des - act) > atol + rtol * @abs(des)) {
+                        return false;
+                    }
+                }
+            }
+            return true;
+        }
+
+        // ************************
+        // *** Instance Methods ***
+        // ************************
 
         /// Return a transposed view of the matrix
         ///
@@ -246,8 +300,8 @@ pub fn Matrix(Element: type) type {
         /// The matrices must be of the same shape, or be broadcastable into the same shape.
         pub fn binary(allocator: std.mem.Allocator, binary_fn: fn (Element, Element) Element, mat1: *const Self, mat2: *const Self) !Self {
             const broadcast_shape = try MatrixShape.broadcast(mat1.shape, mat2.shape);
-            const mat1_view = try mat1.broadcast_view(broadcast_shape);
-            const mat2_view = try mat2.broadcast_view(broadcast_shape);
+            const mat1_view = try mat1.broadcastview(broadcast_shape);
+            const mat2_view = try mat2.broadcastview(broadcast_shape);
 
             var result_mat = try Self.init(allocator, broadcast_shape);
 
@@ -266,7 +320,7 @@ pub fn Matrix(Element: type) type {
         /// This sets the stride for row/col which had size 1, and differed from
         /// the broadcase_shape, to 0. If the broadcast_shape can't be achieved
         /// with this approach, `MatrixError.Unbroadcastable` is returned instead
-        fn broadcast_view(matrix: *const Self, broadcast_shape: MatrixShape) !Self {
+        fn broadcastview(matrix: *const Self, broadcast_shape: MatrixShape) !Self {
             var broadcast_stride = MatrixStride{ .row = matrix.stride.row, .col = matrix.stride.col };
             if (matrix.shape.rows != broadcast_shape.rows) {
                 if (matrix.shape.rows != 1) {
@@ -318,7 +372,7 @@ test "Create Filled Matrix" {
         if (deinit_status == .leak) std.testing.expect(false) catch @panic("TEST FAIL");
     }
 
-    var matrix: Matrix(u16) = try Matrix(u16).init_with_value(test_allocator, .{
+    var matrix: Matrix(u16) = try Matrix(u16).initWithValue(test_allocator, .{
         .rows = 3,
         .cols = 4,
     }, 0);
@@ -342,7 +396,7 @@ test "Create Zeroed Matrix" {
         if (deinit_status == .leak) std.testing.expect(false) catch @panic("TEST FAIL");
     }
 
-    var matrix: Matrix(u16) = try Matrix(u16).init_zeros(test_allocator, .{
+    var matrix: Matrix(u16) = try Matrix(u16).initZeros(test_allocator, .{
         .rows = 3,
         .cols = 4,
     });
@@ -365,7 +419,7 @@ test "Create Identity Matrix" {
         if (deinit_status == .leak) std.testing.expect(false) catch @panic("TEST FAIL");
     }
 
-    var matrix: Matrix(u16) = try Matrix(u16).init_ident(test_allocator, .{
+    var matrix: Matrix(u16) = try Matrix(u16).initIdent(test_allocator, .{
         .rows = 3,
         .cols = 4,
     });
@@ -393,7 +447,7 @@ test "Create Sequential Matrix" {
         if (deinit_status == .leak) std.testing.expect(false) catch @panic("TEST FAIL");
     }
 
-    var matrix: Matrix(u16) = try Matrix(u16).init_arange(test_allocator, .{
+    var matrix: Matrix(u16) = try Matrix(u16).initArange(test_allocator, .{
         .rows = 3,
         .cols = 4,
     }, 1);
@@ -417,7 +471,7 @@ test "Changing Elements" {
         if (deinit_status == .leak) std.testing.expect(false) catch @panic("TEST FAIL");
     }
 
-    var matrix: Matrix(u16) = try Matrix(u16).init_with_value(test_allocator, .{
+    var matrix: Matrix(u16) = try Matrix(u16).initWithValue(test_allocator, .{
         .rows = 3,
         .cols = 4,
     }, 0);
@@ -459,7 +513,7 @@ test "Bounds Checks" {
         if (deinit_status == .leak) std.testing.expect(false) catch @panic("TEST FAIL");
     }
 
-    var matrix: Matrix(u16) = try Matrix(u16).init_with_value(test_allocator, .{
+    var matrix: Matrix(u16) = try Matrix(u16).initWithValue(test_allocator, .{
         .rows = 3,
         .cols = 4,
     }, 0);
@@ -483,7 +537,7 @@ test "Copy Matrix" {
         if (deinit_status == .leak) std.testing.expect(false) catch @panic("TEST FAIL");
     }
 
-    var matrix: Matrix(u16) = try Matrix(u16).init_with_value(test_allocator, .{
+    var matrix: Matrix(u16) = try Matrix(u16).initWithValue(test_allocator, .{
         .rows = 3,
         .cols = 4,
     }, 0);
@@ -515,13 +569,13 @@ test "Binary Function" {
         if (deinit_status == .leak) std.testing.expect(false) catch @panic("TEST FAIL");
     }
 
-    var matrix1: Matrix(u16) = try Matrix(u16).init_with_value(test_allocator, .{
+    var matrix1: Matrix(u16) = try Matrix(u16).initWithValue(test_allocator, .{
         .rows = 3,
         .cols = 4,
     }, 1);
     defer matrix1.deinit(test_allocator);
 
-    var matrix2: Matrix(u16) = try Matrix(u16).init_with_value(test_allocator, .{
+    var matrix2: Matrix(u16) = try Matrix(u16).initWithValue(test_allocator, .{
         .rows = 1,
         .cols = 4,
     }, 0);
@@ -557,7 +611,7 @@ test "Format Matrix" {
         if (deinit_status == .leak) std.testing.expect(false) catch @panic("TEST FAIL");
     }
 
-    var matrix: Matrix(u16) = try Matrix(u16).init_with_value(test_allocator, .{
+    var matrix: Matrix(u16) = try Matrix(u16).initWithValue(test_allocator, .{
         .rows = 3,
         .cols = 4,
     }, 0);
