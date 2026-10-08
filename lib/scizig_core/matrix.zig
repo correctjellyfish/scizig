@@ -496,7 +496,10 @@ test "Copy Matrix" {
     try std.testing.expectEqual(try matrix.get(0, 0), 0);
     try std.testing.expectEqual(try matrix_copy.get(0, 0), 1);
 
-    var matrix_view = matrix.slice(.{ .start = null, .stop = null, .step = null }, .{ .start = null, .stop = null, .step = null });
+    var matrix_view = matrix.slice(
+        .{ .start = null, .stop = null, .step = null },
+        .{ .start = null, .stop = null, .step = null },
+    );
     // Updating matrix view should change the original
     (try matrix_view.at(1, 2)).* = 5;
     try std.testing.expectEqual(try matrix_view.get(1, 2), 5);
