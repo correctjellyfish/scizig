@@ -16,9 +16,9 @@ pub fn build(b: *std.Build) void {
     // target and optimize options) will be listed when running `zig build --help`
     // in this directory.
 
-    // Module containing core datastructures
-    const core_datastructures = b.addModule("core_datastructures", .{
-        .root_source_file = b.path("lib/core_datastructures/core_datastructures.zig"),
+    // Module containing core data structures
+    const core = b.addModule("core", .{
+        .root_source_file = b.path("lib/core/datastructures.zig"),
         .target = target,
     });
 
@@ -40,7 +40,7 @@ pub fn build(b: *std.Build) void {
         // Later on we'll use this module as the root module of a test executable
         // which requires us to specify a target.
         .target = target,
-        .imports = &.{.{ .name = "core_datastructures", .module = core_datastructures }},
+        .imports = &.{.{ .name = "core", .module = core }},
     });
 
     // Here we define an executable. An executable needs to have a root module
@@ -127,8 +127,8 @@ pub fn build(b: *std.Build) void {
     // A run step that will run the test executable.
     const run_mod_tests = b.addRunArtifact(mod_tests);
 
-    const core_datastructures_tests = b.addTest(.{ .root_module = core_datastructures });
-    const run_datastructures_tests = b.addRunArtifact(core_datastructures_tests);
+    const core_tests = b.addTest(.{ .root_module = core });
+    const run_datastructures_tests = b.addRunArtifact(core_tests);
 
     // Creates an executable that will run `test` blocks from the executable's
     // root module. Note that test executables only test one module at a time,
