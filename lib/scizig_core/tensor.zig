@@ -107,7 +107,7 @@ fn Operation(Element: type) type {
         unary: Unary(Element),
         /// The Tensor was not created by an operation (i.e. it comes from the
         /// Tensor creation methods)
-        root: void,
+        root,
 
         /// Perform the operation to create a new Tensor
         pub fn perform(self: Self, allocator: std.mem.Allocator) Tensor(Element) {
@@ -147,9 +147,147 @@ pub fn Tensor(Element: type) type {
         /// Mark whether a Tensor has been visited during backpropogation
         mark: bool,
 
+        /// Initialize an empty Tensor
+        pub fn init(allocator: std.mem.Allocator, shape: []const usize) !Self {
+            var size: usize = 1;
+            var dim_stride: usize = 1;
+
+            var stride = try allocator.alloc(usize, shape.len);
+            const tensor_shape = try allocator.dupe(usize, shape);
+
+            var idx: usize = shape.len;
+            while (idx > 0) {
+                idx -= 1;
+                stride[idx] = dim_stride;
+                size *= shape[idx];
+                dim_stride *= shape[idx];
+            }
+
+            const data = try allocator.alloc(Element, size);
+            const grad = if (track_gradients) try allocator.alloc(Element, size) else null;
+            const operation: ?Operation(Element) = if (track_gradients) Operation(Element).root else null;
+
+            // If grad exists, ensure it is zeroed
+            if (grad) |g| {
+                for (0..g.len) |i| {
+                    g[i] = 0;
+                }
+            }
+
+            return Self{
+                .data = data,
+                .grad = grad,
+                .shape = tensor_shape,
+                .stride = stride,
+                .is_view = false,
+                .operation = operation,
+                .mark = false,
+            };
+        }
+
+        /// Initialize a Tensor with a specified value
+        pub fn initWithValue(allocator: std.mem.Allocator, shape: []const usize, value: Element) !Self {
+            var tensor = try Self.init(allocator, shape);
+            for (0..tensor.data.len) |idx| {
+                tensor.data[idx] = value;
+            }
+            return tensor;
+        }
+
+        /// Deinitialize the data a Tensor owns
+        pub fn deinit(tensor: *Self, allocator: std.mem.Allocator) void {
+            // Regardless of whether tensor is a view,
+            // the shape and stride should be freed
+            allocator.free(tensor.shape);
+            allocator.free(tensor.stride);
+            // If a Tensor is not a view free data,
+            // and potentially grad
+            if (!tensor.is_view) {
+                allocator.free(tensor.data);
+                if (tensor.grad) |grad| {
+                    allocator.free(grad);
+                }
+            }
+            // Invalidate pointer
+            tensor.* = undefined;
+        }
+
+        /// Get a pointer to the element at position `where`
+        pub fn at(tensor: *Self, where: []const usize) *Element {
+            var position: usize = 0;
+            for (where, tensor.stride) |coord, stride| {
+                position += (coord * stride);
+            }
+            return &(tensor.data[position]);
+        }
+
+        /// Get the element at position `where`
+        pub fn get(tensor: *Self, where: []const usize) Element {
+            var position: usize = 0;
+            for (where, tensor.stride) |coord, stride| {
+                position += (coord * stride);
+            }
+            return tensor.data[position];
+        }
+
         /// Perform backpropogation from the Tensor to its parent/parents
         pub fn backward(tensor: *Self) void {
             tensor.operation.backward(tensor);
         }
     };
+}
+
+test "Create Tensor Alloc" {
+    var gpa: std.heap.DebugAllocator(.{}) = .init;
+    const test_allocator = gpa.allocator();
+    defer {
+        const deinit_status = gpa.deinit();
+        //fail test; can't try in defer as defer is executed after we return
+        if (deinit_status == .leak) std.testing.expect(false) catch @panic("TEST FAIL");
+    }
+
+    var tensor = try Tensor(f32).init(test_allocator, &.{ 2, 3, 4 });
+    defer tensor.deinit(test_allocator);
+
+    // Check that the stride is as expected
+    try std.testing.expectEqualSlices(usize, &.{ 12, 4, 1 }, tensor.stride);
+    // Check that the shape is as expected
+    try std.testing.expectEqualSlices(usize, &.{ 2, 3, 4 }, tensor.shape);
+}
+
+test "Change Tensor Value" {
+    const tolerance = 1e-10;
+    var gpa: std.heap.DebugAllocator(.{}) = .init;
+    const test_allocator = gpa.allocator();
+    defer {
+        const deinit_status = gpa.deinit();
+        //fail test; can't try in defer as defer is executed after we return
+        if (deinit_status == .leak) std.testing.expect(false) catch @panic("TEST FAIL");
+    }
+
+    var tensor = try Tensor(f32).initWithValue(test_allocator, &.{ 2, 3, 4 }, 0);
+    defer tensor.deinit(test_allocator);
+
+    tensor.at(&.{ 0, 0, 0 }).* = 10;
+    tensor.at(&.{ 0, 0, 1 }).* = 100;
+    tensor.at(&.{ 0, 1, 0 }).* = 75;
+    tensor.at(&.{ 1, 0, 0 }).* = 55;
+    tensor.at(&.{ 1, 2, 3 }).* = 15;
+
+    try std.testing.expectApproxEqAbs(10, tensor.data[0], tolerance);
+    try std.testing.expectApproxEqAbs(15, tensor.data[tensor.data.len - 1], tolerance);
+    try std.testing.expectApproxEqAbs(100, tensor.data[1], tolerance);
+    try std.testing.expectApproxEqAbs(75, tensor.data[4], tolerance);
+    try std.testing.expectApproxEqAbs(55, tensor.data[12], tolerance);
+
+    var tensor_2d = try Tensor(f32).initWithValue(test_allocator, &.{ 3, 4 }, 0);
+    defer tensor_2d.deinit(test_allocator);
+
+    tensor_2d.at(&.{ 0, 0 }).* = 9;
+    tensor_2d.at(&.{ 0, 1 }).* = 7;
+    tensor_2d.at(&.{ 1, 0 }).* = 5;
+
+    try std.testing.expectApproxEqAbs(9, tensor_2d.data[0], tolerance);
+    try std.testing.expectApproxEqAbs(7, tensor_2d.data[1], tolerance);
+    try std.testing.expectApproxEqAbs(5, tensor_2d.data[4], tolerance);
 }
