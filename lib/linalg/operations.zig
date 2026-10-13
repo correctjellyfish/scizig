@@ -1,8 +1,7 @@
 const std = @import("std");
 
-const core = @import("scizig_core");
-const matrix = core.matrix;
-const Matrix = matrix.Matrix;
+const core = @import("../scizig_core/core.zig");
+const Matrix = core.Matrix;
 
 /// Errors that may occur during the operations
 const LinAlgError = error{
@@ -20,7 +19,7 @@ const LinAlgError = error{
 /// Matrix multiplication of two matrices
 ///
 /// Must have compatible shapes (mxn nxp resulting in and mxp matrix)
-fn matMul(comptime Element: type, allocator: std.mem.Allocator, a: Matrix(Element), b: Matrix(Element)) LinAlgError!Matrix(Element) {
+pub fn matMul(comptime Element: type, allocator: std.mem.Allocator, a: Matrix(Element), b: Matrix(Element)) LinAlgError!Matrix(Element) {
     if (a.shape.cols != b.shape.rows) {
         return LinAlgError.IncompatibleShapes;
     }
