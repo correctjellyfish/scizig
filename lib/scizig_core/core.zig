@@ -18,6 +18,11 @@ pub const Matrix = matrix.Matrix;
 pub const MatrixSlice = matrix.MatrixSlice;
 pub const MatrixError = matrix.MatrixError;
 
+// Tensor
+pub const tensor = @import("tensor.zig");
+pub const Tensor = tensor.Tensor;
+pub const TensorSlice = tensor.Slice;
+
 test {
     std.testing.refAllDecls(@This());
 }
